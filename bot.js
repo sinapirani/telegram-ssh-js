@@ -12,6 +12,16 @@ const {
 } = require("./helper");
 var exec = require("child_process").exec;
 
+/**
+ * @typedef {Object} CliArgs
+ * @property {string} bot_token - Telegram bot token
+ * @property {string} chat_id - Telegram chat ID
+ * @property {string} owner_ids - Comma-separated list of owner chat IDs
+ * @property {string|undefined} path_privatekey - Path to SSH private key
+ * @property {string} servers_file - Path to servers JSON file
+ */
+
+/** @type {CliArgs} */
 const argv = yargs(hideBin(process?.argv))
   .option("bot_token", {
     alias: "b",
@@ -33,17 +43,18 @@ const argv = yargs(hideBin(process?.argv))
   })
   .option("path_privatekey", {
     alias: "p",
-    describe: "Path to SSH private key",
+    describe: "Path to SSH private key (optional if using password auth)",
     type: "string",
-    demandOption: true,
+    demandOption: false,
   })
   .option("servers_file", {
     alias: "s",
     describe: "Path to servers JSON file",
     type: "string",
     demandOption: true,
-    default: "/var/telegram-ssh/servers.json",
-  }).argv;
+    default: `${process.env.HOME}/.telegram-ssh/servers.json`,
+  })
+  .parseSync();
 
 const TOKEN = argv?.bot_token,
   CHAT_ID = argv?.chat_id,
@@ -53,6 +64,11 @@ const TOKEN = argv?.bot_token,
 
 //
 console.log({ TOKEN, CHAT_ID, OWNER_IDS, PATH_PRIVATEKEY, SERVERS_FILE });
+
+const DEFAULT_PATH = `${process.env.HOME}/.telegram-ssh`;
+if (!fs.existsSync(DEFAULT_PATH)) {
+  fs.mkdirSync(DEFAULT_PATH);
+}
 
 // Load the servers from the JSON file
 let servers = [];
@@ -108,7 +124,7 @@ const sshExecute = (command, ping) => {
             message_id: ping.message_id,
             chat_id: ping.chat.id,
             parse_mode: "HTML",
-          }
+          },
         );
       } else {
         await bot.sendMessage(
@@ -118,7 +134,7 @@ const sshExecute = (command, ping) => {
           }`,
           {
             parse_mode: "HTML",
-          }
+          },
         );
       }
     });
@@ -131,7 +147,7 @@ async function checkOwner(msg) {
   if (!OWNER_IDS.includes(String(msg.chat.id))) {
     await bot.sendMessage(
       CHAT_ID,
-      `Unauthorized access\n${JSON.stringify(msg)}`
+      `Unauthorized access\n${JSON.stringify(msg)}`,
     );
     return false;
   }
@@ -183,7 +199,7 @@ bot.onText(/\/cmd (.+)/, async (msg, match) => {
       if (error) {
         await bot.sendMessage(
           CHAT_ID,
-          `error: ${JSON.stringify(error, null, 2)}`
+          `error: ${JSON.stringify(error, null, 2)}`,
         );
         return;
       }
@@ -231,7 +247,7 @@ bot.onText(/\/current/, async (msg) => {
   if (!current) {
     await bot.sendMessage(
       CHAT_ID,
-      `No server connected. Please connect to a server first.`
+      `No server connected. Please connect to a server first.`,
     );
     return;
   }
@@ -241,7 +257,7 @@ bot.onText(/\/current/, async (msg) => {
     {
       disable_web_page_preview: true,
       protect_content: true,
-    }
+    },
   );
 });
 
@@ -274,7 +290,7 @@ bot.onText(/\/add (.+)/, async (msg, match) => {
       {
         disable_web_page_preview: true,
         protect_content: true,
-      }
+      },
     );
     return;
   }
@@ -289,7 +305,7 @@ bot.onText(/\/add (.+)/, async (msg, match) => {
       {
         disable_web_page_preview: true,
         protect_content: true,
-      }
+      },
     );
     return;
   }
@@ -306,36 +322,39 @@ bot.onText(/\/add (.+)/, async (msg, match) => {
 
   const resolvedPathPrivateKey = data?.pathPrivateKey || PATH_PRIVATEKEY;
 
-  if (!fs.existsSync(resolvedPathPrivateKey)) {
-    await bot.sendMessage(
-      CHAT_ID,
-      `File not found\n${resolvedPathPrivateKey}`,
-      {
-        disable_web_page_preview: true,
-      }
-    );
-    return;
-  }
-
+  // Check if at least one authentication method is provided
   if (!resolvedPathPrivateKey && !data?.password) {
     await bot.sendMessage(
       CHAT_ID,
-      "At least one of -pri or -pass must be provided.",
+      "At least one of -pri (private key) or -pass (password) must be provided.",
       {
         disable_web_page_preview: true,
         protect_content: true,
-      }
+      },
     );
     return;
   }
 
+  // Validate private key file exists if provided
+  if (resolvedPathPrivateKey && !fs.existsSync(resolvedPathPrivateKey)) {
+    await bot.sendMessage(
+      CHAT_ID,
+      `Private key file not found: ${resolvedPathPrivateKey}`,
+      {
+        disable_web_page_preview: true,
+      },
+    );
+    return;
+  }
+
+  // keypass requires a private key
   if (data?.keyPassword && !resolvedPathPrivateKey) {
     await bot.sendMessage(
       CHAT_ID,
-      "Both of -pri and -keypass must be provided.",
+      "-keypass requires a private key (-pri) to be provided.",
       {
         disable_web_page_preview: true,
-      }
+      },
     );
     return;
   }
@@ -359,7 +378,7 @@ bot.onText(/\/add (.+)/, async (msg, match) => {
     `Added ${username}@${host}:${newServer.port} successfully`,
     {
       disable_web_page_preview: true,
-    }
+    },
   );
 });
 
@@ -388,7 +407,7 @@ bot.onText(/\/rm (.+)/, async (msg, match) => {
       {
         disable_web_page_preview: true,
         protect_content: true,
-      }
+      },
     );
   } else {
     await bot.sendMessage(CHAT_ID, `${sv} is not valid`, {
@@ -420,28 +439,60 @@ bot.onText(/\/ssh (.+)/, async (msg, match) => {
     find = servers[index];
   }
 
-  let pathPrivateKey = current?.pathPrivateKey || PATH_PRIVATEKEY;
-  let privateKey;
-
-  try {
-    privateKey = fs.readFileSync(pathPrivateKey);
-  } catch (error) {
-    await bot.sendMessage(CHAT_ID, `File not found\n${pathPrivateKey}`, {
-      disable_web_page_preview: true,
-    });
-    return;
-  }
-
   if (find) {
     current = find;
-    ssh.connect({
+
+    // Build SSH connection config based on available authentication methods
+    const sshConfig = {
       host: current?.host,
       username: current?.username,
-      password: current?.password,
-      privateKey: privateKey,
       port: +current?.port || 22,
-      passphrase: current?.keyPassword,
-    });
+    };
+
+    // Check for private key authentication
+    const pathPrivateKey = current?.pathPrivateKey || PATH_PRIVATEKEY;
+    if (pathPrivateKey) {
+      try {
+        sshConfig.privateKey = fs.readFileSync(pathPrivateKey);
+        // Add passphrase for encrypted private key if provided
+        if (current?.keypass) {
+          sshConfig.passphrase = current.keypass;
+        }
+      } catch (error) {
+        // Private key file not found, will try password auth if available
+        console.log(
+          `Private key not found: ${pathPrivateKey}, trying password auth`,
+        );
+      }
+    }
+
+    // Add password authentication if available
+    if (current?.password) {
+      sshConfig.password = current.password;
+    }
+
+    // Validate that at least one authentication method is available
+    if (!sshConfig.privateKey && !sshConfig.password) {
+      await bot.sendMessage(
+        CHAT_ID,
+        "No authentication method available. Please provide either a password or private key.",
+        {
+          disable_web_page_preview: true,
+          protect_content: true,
+        },
+      );
+      return;
+    }
+
+    await bot.sendMessage(
+      CHAT_ID,
+      `Connecting to ${current.username}@${current.host}:${current.port}...`,
+      {
+        disable_web_page_preview: true,
+        protect_content: true,
+      },
+    );
+    ssh.connect(sshConfig);
   } else {
     await bot.sendMessage(CHAT_ID, `${sv} is not valid`, {
       disable_web_page_preview: true,
@@ -473,7 +524,7 @@ bot.on("text", async (msg) => {
   if (!current) {
     await bot.sendMessage(
       CHAT_ID,
-      `No server connected. Please connect to a server first.`
+      `No server connected. Please connect to a server first.`,
     );
     return;
   }

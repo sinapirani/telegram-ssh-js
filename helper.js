@@ -19,7 +19,7 @@ const isBotCommand = (message) => {
     return false;
   }
   const botCommands = message.entities.filter(
-    (entity) => entity.type === "bot_command"
+    (entity) => entity.type === "bot_command",
   );
   return botCommands.length > 0;
 };
@@ -33,6 +33,22 @@ const trimQuotes = (str) => {
   return str.replace(/^['"]+|['"]+$/g, "");
 };
 
+/**
+ * @typedef {Object} ParseInputResult
+ * @property {string[]} _args - The parsed arguments array
+ * @property {string} [password] - The password value
+ * @property {string} [port] - The port value
+ * @property {string} [note] - The note value
+ * @property {string} [pathPrivateKey] - The private key path value
+ * @property {string} [keyPassword] - The key password/passphrase value
+ */
+
+/**
+ * Parses input string to extract command arguments and options
+ * @param {string} input - The input string to parse
+ * @param {Object} [key] - The key-value mapping of option names to their flags
+ * @returns {ParseInputResult} The parsed result object
+ */
 const parseInput = (
   input,
   key = {
@@ -41,13 +57,14 @@ const parseInput = (
     note: "-n",
     pathPrivateKey: "-pri",
     keyPassword: "-keypass",
-  }
+  },
 ) => {
   const arguments = input
     .trim()
     .split(/(?= -\w)/)
     .map((arg) => arg.trim());
-  let data = {};
+  /** @type {ParseInputResult} */
+  let data = { _args: [] };
   arguments.forEach((arg) => {
     Object.entries(key).forEach(([option, flag]) => {
       if (arg.startsWith(flag + " ")) {
