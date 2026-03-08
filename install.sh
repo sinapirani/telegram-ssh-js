@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# install.sh for telegram-ssh-js
-# Usage: bash <(curl -Ls https://raw.githubusercontent.com/<your-repo>/install.sh)
-
+# install.sh for telegram-ssh-js — interactive installer with node version check (node >= 18)
 set -euo pipefail
 
 REPO_URL="https://github.com/sinapirani/telegram-ssh-js.git"
@@ -21,11 +19,51 @@ ensure_sudo(){
   fi
 }
 
+# Check node version. If missing or major < 18 -> install Node.js 18 + npm via NodeSource.
+ensure_node_18(){
+  need_install=0
+  if ! command -v node >/dev/null 2>&1; then
+    info "node not found."
+    need_install=1
+  else
+    ver=$(node -v 2>/dev/null || echo "")
+    if [[ "$ver" =~ ^v([0-9]+) ]]; then
+      major="${BASH_REMATCH[1]}"
+      info "Detected node version: $ver (major: $major)"
+      if (( major < 18 )); then
+        info "Node major version < 18 -> will install Node.js 18."
+        need_install=1
+      else
+        info "Node version is OK (>=18)."
+      fi
+    else
+      info "Could not parse node version: $ver"
+      need_install=1
+    fi
+  fi
+
+  if (( need_install )); then
+    ensure_sudo
+    info "Installing Node.js 18 (NodeSource)..."
+    # add NodeSource repo and install nodejs 18
+    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+    # ensure npm exists (nodejs package provides npm). If not, install npm
+    if ! command -v npm >/dev/null 2>&1; then
+      info "npm not found after node install — installing npm..."
+      sudo apt-get install -y npm
+    fi
+    info "Node.js and npm installed. New node version: $(node -v || echo 'unknown')"
+  fi
+}
+
 install_prereqs(){
-  info "Updating packages and installing prerequisites (git, curl, nodejs, npm)..."
+  info "Updating packages and installing prerequisites (git, curl, build-essential)..."
+  ensure_sudo
   sudo apt update -y
   sudo apt upgrade -y
-  sudo apt install -y git curl nodejs npm build-essential
+  sudo apt install -y git curl build-essential
+  ensure_node_18
 }
 
 write_config(){
@@ -58,6 +96,7 @@ read_config(){
 
 pm2_install_and_reload(){
   info "Installing pm2 globally (if missing) and reloading..."
+  # install pm2 globally with sudo to ensure system-wide availability
   sudo npm i -g pm2
 }
 
@@ -118,7 +157,6 @@ do_install(){
 
   write_config "$chat_id" "$bot_token" "$max_retry" "$owner_ids"
 
-  ensure_sudo
   install_prereqs
 
   info "Cloning repository to $APP_DIR..."
