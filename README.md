@@ -1,3 +1,18 @@
+<img width="480" height="462" alt="image" src="https://github.com/user-attachments/assets/aed1555e-8f32-463f-896e-2a2d609bba9f" />
+
+از اونجایی که کانکشن SSH بسیار سریع دراپ میشه یکی از بهترین گذینه‌ها کنترل SSH از طریق تلگرامه.
+یه آپدیت دادم واسه Telegram SSH و یکسری تغییرات اضافه شد:
+۱- اضافه شدن اسکریپت نصب، حذف و مدیریت سریع ✅
+۲- توی نسخه قبلی نمیشد با رمز لاگین زد و حتما باید Private Key میبود ولی الان این باگ حل شده و با داشتن رمز میتونین ورود کنین✅
+۳- مکانیزم Retry: در صورت قطعی کانکشن به صورت  خودکار تا سه مرتبه تلاش مجدد  انجام میشه✅
+۴- یکسری ریزه کاری دیگه که یادم نیست‌:)
+
+نحوه مدیریت و نصب با لانچر(نصب خودکار Node24 و Npm درصورت وجود نداشتن):
+bash <(curl -Ls https://raw.githubusercontent.com/sinapirani/telegram-ssh-js/refs/heads/master/install.sh)
+نصب دستی:
+cd /opt && git clone https://github.com/sinapirani/telegram-ssh-js.git && cd /opt/telegram-ssh-js && npm i && npm i pm2 -g && pm2 start bot.js --name telegram-ssh --  --bot_token "" --chat_id "" --owner_ids "Same as chat_id!"
+
+
 # telegram-ssh
 
 A simple SSH manager and client for your servers, integrated with Telegram for easy control and monitoring.
