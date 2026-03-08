@@ -73,7 +73,7 @@ const TOKEN = argv?.bot_token,
 //
 console.log({ TOKEN, CHAT_ID, OWNER_IDS, PATH_PRIVATEKEY, SERVERS_FILE });
 
-const DEFAULT_PATH = `${process.env.HOME}/.telegram-ssh`;
+const DEFAULT_PATH = `${process.env.HOME}/.telegram-ssh-js`;
 if (!fs.existsSync(DEFAULT_PATH)) {
   fs.mkdirSync(DEFAULT_PATH);
 }
