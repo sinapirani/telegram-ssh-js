@@ -44,9 +44,9 @@ ensure_node_18(){
 
   if (( need_install )); then
     ensure_sudo
-    info "Installing Node.js 18 (NodeSource)..."
+    info "Installing Node.js 24 (NodeSource)..."
     # add NodeSource repo and install nodejs 18
-    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+    curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
     sudo apt-get install -y nodejs
     # ensure npm exists (nodejs package provides npm). If not, install npm
     if ! command -v npm >/dev/null 2>&1; then
