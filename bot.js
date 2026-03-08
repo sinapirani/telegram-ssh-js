@@ -19,6 +19,7 @@ var exec = require("child_process").exec;
  * @property {string} owner_ids - Comma-separated list of owner chat IDs
  * @property {string|undefined} path_privatekey - Path to SSH private key
  * @property {string} servers_file - Path to servers JSON file
+ * @property {number} max_retry - Maximum number of SSH connection retries
  */
 
 /** @type {CliArgs} */
@@ -53,6 +54,13 @@ const argv = yargs(hideBin(process?.argv))
     type: "string",
     demandOption: true,
     default: `${process.env.HOME}/.telegram-ssh/servers.json`,
+  })
+  .option("max_retry", {
+    alias: "m",
+    describe: "Maximum number of SSH connection retries",
+    type: "number",
+    demandOption: false,
+    default: 3,
   })
   .parseSync();
 
@@ -91,9 +99,124 @@ if (fs.existsSync(SERVERS_FILE)) {
 const ssh = new Client();
 let pwd = "~";
 
+// Retry mechanism state
+let retryCount = 0;
+let retryTimeout = null;
+let isExiting = false;
+const MAX_RETRY = argv?.max_retry || 3;
+
 ssh.on("ready", async () => {
+  retryCount = 0; // Reset retry count on successful connection
   await bot.sendMessage(CHAT_ID, "SSH successfully connected.");
 });
+
+ssh.on("error", async (err) => {
+  console.log("SSH connection error:", err.message);
+
+  // Don't retry if user initiated exit
+  if (isExiting) {
+    return;
+  }
+
+  // Check if we've exhausted retries
+  if (retryCount >= MAX_RETRY) {
+    await bot.sendMessage(
+      CHAT_ID,
+      `SSH connection failed after ${MAX_RETRY} attempts. Last error: ${err.message}`,
+      { disable_web_page_preview: true },
+    );
+    current = null;
+    retryCount = 0;
+    return;
+  }
+
+  retryCount++;
+  await bot.sendMessage(
+    CHAT_ID,
+    `SSH connection failed (attempt ${retryCount}/${MAX_RETRY}). Retrying in 5 seconds...`,
+    { disable_web_page_preview: true },
+  );
+
+  // Schedule retry
+  retryTimeout = setTimeout(() => {
+    if (!isExiting && current) {
+      connectToSSH(current);
+    }
+  }, 5000);
+});
+
+ssh.on("close", async () => {
+  console.log("SSH connection closed");
+
+  // Don't retry if user initiated exit
+  if (isExiting) {
+    isExiting = false;
+    return;
+  }
+
+  // Check if we've exhausted retries
+  if (retryCount >= MAX_RETRY) {
+    await bot.sendMessage(
+      CHAT_ID,
+      `SSH connection closed. Max retries (${MAX_RETRY}) reached.`,
+      { disable_web_page_preview: true },
+    );
+    current = null;
+    retryCount = 0;
+    return;
+  }
+
+  // Only retry if we have a current server and not exiting
+  if (current && retryCount < MAX_RETRY) {
+    retryCount++;
+    await bot.sendMessage(
+      CHAT_ID,
+      `SSH connection closed (attempt ${retryCount}/${MAX_RETRY}). Retrying in 5 seconds...`,
+      { disable_web_page_preview: true },
+    );
+
+    retryTimeout = setTimeout(() => {
+      if (!isExiting && current) {
+        connectToSSH(current);
+      }
+    }, 5000);
+  }
+});
+
+/**
+ * Connect to SSH server with the given server configuration
+ * @param {Object} serverConfig - Server configuration object
+ */
+function connectToSSH(serverConfig) {
+  const sshConfig = {
+    host: serverConfig?.host,
+    username: serverConfig?.username,
+    port: +serverConfig?.port || 22,
+  };
+
+  // Check for private key authentication
+  const pathPrivateKey = serverConfig?.pathPrivateKey || PATH_PRIVATEKEY;
+  if (pathPrivateKey) {
+    try {
+      sshConfig.privateKey = fs.readFileSync(pathPrivateKey);
+      // Add passphrase for encrypted private key if provided
+      if (serverConfig?.keypass) {
+        sshConfig.passphrase = serverConfig.keypass;
+      }
+    } catch (error) {
+      console.log(
+        `Private key not found: ${pathPrivateKey}, trying password auth`,
+      );
+    }
+  }
+
+  // Add password authentication if available
+  if (serverConfig?.password) {
+    sshConfig.password = serverConfig.password;
+  }
+
+  ssh.connect(sshConfig);
+}
 
 const sshExecute = (command, ping) => {
   const cmd = `cd ${pwd} && ${command}`;
@@ -440,39 +563,32 @@ bot.onText(/\/ssh (.+)/, async (msg, match) => {
   }
 
   if (find) {
+    // Reset retry state for new connection
+    retryCount = 0;
+    isExiting = false;
+    if (retryTimeout) {
+      clearTimeout(retryTimeout);
+      retryTimeout = null;
+    }
+
     current = find;
 
-    // Build SSH connection config based on available authentication methods
-    const sshConfig = {
-      host: current?.host,
-      username: current?.username,
-      port: +current?.port || 22,
-    };
-
-    // Check for private key authentication
+    // Validate that at least one authentication method is available
     const pathPrivateKey = current?.pathPrivateKey || PATH_PRIVATEKEY;
+    let hasPrivateKey = false;
     if (pathPrivateKey) {
       try {
-        sshConfig.privateKey = fs.readFileSync(pathPrivateKey);
-        // Add passphrase for encrypted private key if provided
-        if (current?.keypass) {
-          sshConfig.passphrase = current.keypass;
-        }
+        fs.readFileSync(pathPrivateKey);
+        hasPrivateKey = true;
       } catch (error) {
-        // Private key file not found, will try password auth if available
+        // Private key file not found
         console.log(
           `Private key not found: ${pathPrivateKey}, trying password auth`,
         );
       }
     }
 
-    // Add password authentication if available
-    if (current?.password) {
-      sshConfig.password = current.password;
-    }
-
-    // Validate that at least one authentication method is available
-    if (!sshConfig.privateKey && !sshConfig.password) {
+    if (!hasPrivateKey && !current?.password) {
       await bot.sendMessage(
         CHAT_ID,
         "No authentication method available. Please provide either a password or private key.",
@@ -481,6 +597,7 @@ bot.onText(/\/ssh (.+)/, async (msg, match) => {
           protect_content: true,
         },
       );
+      current = null;
       return;
     }
 
@@ -492,7 +609,7 @@ bot.onText(/\/ssh (.+)/, async (msg, match) => {
         protect_content: true,
       },
     );
-    ssh.connect(sshConfig);
+    connectToSSH(current);
   } else {
     await bot.sendMessage(CHAT_ID, `${sv} is not valid`, {
       disable_web_page_preview: true,
@@ -506,8 +623,21 @@ bot.onText(/\/exit/, async (msg, match) => {
   if (!o) {
     return;
   }
+
+  // Set exit flag and clear any pending retry
+  isExiting = true;
+  if (retryTimeout) {
+    clearTimeout(retryTimeout);
+    retryTimeout = null;
+  }
+  retryCount = 0;
   current = null;
-  ssh.end();
+
+  try {
+    ssh.end();
+  } catch (error) {
+    console.log("Error ending SSH connection:", error.message);
+  }
 
   await bot.sendMessage(CHAT_ID, `Disconnected from the current server`, {
     disable_web_page_preview: true,
