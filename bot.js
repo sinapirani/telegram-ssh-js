@@ -53,7 +53,7 @@ const argv = yargs(hideBin(process?.argv))
     describe: "Path to servers JSON file",
     type: "string",
     demandOption: true,
-    default: `${process.env.HOME}/.telegram-ssh/servers.json`,
+    default: `${process.env.HOME}/.telegram-ssh-js/servers.json`,
   })
   .option("max_retry", {
     alias: "m",
